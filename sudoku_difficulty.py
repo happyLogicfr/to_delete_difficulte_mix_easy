@@ -504,22 +504,85 @@ def _generate_puzzle_easy_plus() -> Tuple[Grid, Grid]:
     )
 
 
-def _generate_puzzle_easy() -> Tuple[Grid, Grid]:
-    """Facile standard (équivalent au comportement précédent, mais borné)."""
-    return _generate_puzzle_easy_variant(
-        clues_min=45,
-        clues_max=55,
+def _generate_puzzle_easy(
+    clues_min: int = 45,
+    clues_max: int = 55,
+    max_restarts: int = 200,
+    max_tries_per_restart: int = 6000,
+) -> Tuple[Grid, Grid]:
+    """
+    Génère un puzzle FACILE :
+      - indices nombreux (clues_min..clues_max),
+      - résoluble uniquement avec singles (naked + hidden),
+      - bien réparti.
+
+    IMPORTANT : version bornée (pas de récursion infinie).
+    """
+    for _restart in range(max_restarts):
+        full = generate_full_grid()
+        puzzle = deepcopy(full)
+
+        target = random.randint(clues_min, clues_max)
+        cells = [(r, c) for r in range(9) for c in range(9)]
+        random.shuffle(cells)
+
+        def n_clues(g: Grid) -> int:
+            return sum(1 for r in range(9) for c in range(9) if g[r][c] != 0)
+
+        tries = 0
+        while n_clues(puzzle) > target and tries < max_tries_per_restart:
+            tries += 1
+            r, c = random.choice(cells)
+            if puzzle[r][c] == 0:
+                continue
+
+            keep = puzzle[r][c]
+            puzzle[r][c] = 0
+
+            # unicité
+            if not has_unique_solution(puzzle):
+                puzzle[r][c] = keep
+                continue
+
+            # solvable singles-only
+            solved, chain_ok = _human_solve_basic_only(puzzle)
+            if not (solved and chain_ok):
+                puzzle[r][c] = keep
+                continue
+
+            # bonne répartition
+            if not _well_distributed(puzzle):
+                puzzle[r][c] = keep
+                continue
+
+        clues = n_clues(puzzle)
+        if clues_min <= clues <= clues_max:
+            return puzzle, full
+
+    raise RuntimeError(
+        f"Impossible de générer un puzzle easy (clues {clues_min}..{clues_max}) "
+        f"après {max_restarts} redémarrages."
     )
+
+
+def _generate_puzzle_easy_plus() -> Tuple[Grid, Grid]:
+    """Facile+ (débutant) : plus d'indices, plus fluide."""
+    return _generate_puzzle_easy(clues_min=52, clues_max=58)
+
+
+def _generate_puzzle_easy_standard() -> Tuple[Grid, Grid]:
+    """Facile (standard) : profil historique."""
+    return _generate_puzzle_easy(clues_min=45, clues_max=55)
 
 
 def _generate_puzzle_easy_minus() -> Tuple[Grid, Grid]:
-    """Facile 'piégeux' : toujours singles only, mais moins immédiat (transition vers medium)."""
-    return _generate_puzzle_easy_variant(
-        clues_min=42,
-        clues_max=47,
-        max_first_sweep=10,
-        max_avg_candidates=3.0,
-    )
+    """
+    Facile− (transition) : toujours singles-only, mais fenêtre d'indices
+    volontairement un peu plus haute que 42–47 pour éviter les cas rares
+    qui bloquent la génération.
+    """
+    return _generate_puzzle_easy(clues_min=45, clues_max=50)
+
 
 
 # ====================================================
@@ -931,7 +994,7 @@ class DifficultyProfile:
 
 # profils concrets
 EASY_PLUS_PROFILE = DifficultyProfile("easy_plus", _generate_puzzle_easy_plus)
-EASY_PROFILE = DifficultyProfile("easy", _generate_puzzle_easy)
+EASY_PROFILE = DifficultyProfile("easy", _generate_puzzle_easy_standard)
 EASY_MINUS_PROFILE = DifficultyProfile("easy_minus", _generate_puzzle_easy_minus)
 MEDIUM_PROFILE = DifficultyProfile("medium", _generate_puzzle_medium)
 HARD_PROFILE = DifficultyProfile("hard", _generate_puzzle_hard)
@@ -943,6 +1006,7 @@ PROFILES: Dict[str, DifficultyProfile] = {
     MEDIUM_PROFILE.name: MEDIUM_PROFILE,
     HARD_PROFILE.name: HARD_PROFILE,
 }
+
 
 
 def generate_puzzles_for_profile(profile: DifficultyProfile, count: int) -> List[Tuple[Grid, Grid]]:
@@ -961,6 +1025,8 @@ def generate_puzzles_for_profile(profile: DifficultyProfile, count: int) -> List
     max_tries = count * 10000  # assez large, vu les filtres de difficulté
 
     while len(puzzles) < count and tries < max_tries:
+        if tries and tries % 500 == 0:
+            print(f"[{profile.name}] tries={tries}, ok={len(puzzles)}/{count}")
         tries += 1
 
         puzzle, full = profile.generator()
